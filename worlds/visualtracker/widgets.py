@@ -1,0 +1,181 @@
+from __future__ import annotations
+
+from collections import Counter
+from typing import Callable
+
+
+def create_pin_widget_classes(get_ut_color: Callable[[str], str]):
+    from kivy.app import App
+    from kivy.properties import ColorProperty, DictProperty
+    from kivy.uix.widget import Widget
+    from kvui import HoverBehavior
+    from worlds import AutoWorld
+
+    class ApLocation(HoverBehavior, Widget):
+        locationDict = DictProperty()
+        hover_padding = 8
+
+        def __init__(self, sections, parent, label=None, on_select=None, **kwargs):
+            for location_id in sections:
+                self.locationDict[location_id] = "none"
+                self.tracker_page = parent
+            self.group_label = label
+            self.on_select_callback = on_select
+            self.bind(locationDict=self.update_color)
+            super().__init__(**kwargs)
+
+        def collide_point(self, x, y):
+            return (
+                self.x - self.hover_padding <= x <= self.right + self.hover_padding
+                and self.y - self.hover_padding <= y <= self.top + self.hover_padding
+            )
+
+        def on_enter(self, *_args):
+            pass
+
+        def on_leave(self, *_args):
+            pass
+
+        def transform_to_pop_coords(self, x, y):
+            x2 = x
+            y2 = self.tracker_page.height - y
+            x3 = x2 - (self.tracker_page.x + (self.tracker_page.width - self.tracker_page.norm_image_size[0]) / 2)
+            y3 = y2 + (self.tracker_page.y - (self.tracker_page.height - self.tracker_page.norm_image_size[1]) / 2)
+            x4 = x3 / (
+                (self.tracker_page.norm_image_size[0] / self.tracker_page.texture_size[0])
+                if self.tracker_page.texture_size[0] > 0
+                else 1
+            )
+            y4 = y3 / (
+                (self.tracker_page.norm_image_size[1] / self.tracker_page.texture_size[1])
+                if self.tracker_page.texture_size[0] > 0
+                else 1
+            )
+            x5 = x4 + self.width / 2
+            y5 = y4 + self.width / 2
+            return (x5, y5)
+
+        def on_mouse_pos(self, window, pos):
+            return super().on_mouse_pos(window, pos)
+
+        def to_window(self, x, y):
+            if isinstance(self.border_point, (tuple, list)) and len(self.border_point) >= 2:
+                return self.border_point
+            return self.tracker_page.to_window(x, y)
+
+        def to_widget(self, x, y):
+            return self.transform_to_pop_coords(*self.tracker_page.to_widget(x, y))
+
+        def update_status(self, location, status):
+            if location in self.locationDict:
+                if self.locationDict[location] != status:
+                    self.locationDict[location] = status
+
+        def get_text(self):
+            ctx = App.get_running_app().ctx
+            location_id_to_name = AutoWorld.AutoWorldRegister.world_types[ctx.game].location_id_to_name
+            s_return = []
+            if self.group_label:
+                s_return.append(f"[b]{self.group_label}[/b]")
+            for loc, status in self.locationDict.items():
+                color = get_ut_color("collected_light")
+                if status in [
+                    "in_logic",
+                    "out_of_logic",
+                    "glitched",
+                    "hinted_in_logic",
+                    "hinted_out_of_logic",
+                    "hinted_glitched",
+                ]:
+                    color = get_ut_color(status)
+                s_return.append(f"{location_id_to_name[loc]} : [color={color}]{status}[/color]")
+            return "\n".join(s_return)
+
+        def on_touch_down(self, touch):
+            if super().on_touch_down(touch):
+                return True
+            button = getattr(touch, "button", "left")
+            if button == "left" and self.hovered:
+                if self.on_select_callback:
+                    self.on_select_callback(self)
+                    return True
+            return False
+
+        def update_color(self, locationDict):
+            return
+
+    class APLocationMixed(ApLocation):
+        color = ColorProperty("#" + get_ut_color("error"))
+
+        def __init__(self, sections, parent, label=None, on_select=None, **kwargs):
+            super().__init__(sections, parent, label=label, on_select=on_select, **kwargs)
+
+        @staticmethod
+        def update_color(self, locationDict):
+            glitches = any(status.endswith("glitched") for status in locationDict.values())
+            in_logic = any(status.endswith("in_logic") for status in locationDict.values())
+            out_of_logic = any(status.endswith("out_of_logic") for status in locationDict.values())
+            hinted = any(status.startswith("hinted") for status in locationDict.values())
+
+            if in_logic and (out_of_logic or (glitches and hinted)):
+                self.color = "#" + get_ut_color("mixed_logic")
+            elif glitches and hinted:
+                self.color = "#" + get_ut_color("hinted_glitched")
+            elif hinted and out_of_logic:
+                self.color = "#" + get_ut_color("hinted_out_of_logic")
+            elif hinted:
+                self.color = "#" + get_ut_color("hinted")
+            elif glitches and in_logic:
+                self.color = "#" + get_ut_color("in_logic_glitched")
+            elif glitches and out_of_logic:
+                self.color = "#" + get_ut_color("out_of_logic_glitched")
+            elif in_logic:
+                self.color = "#" + get_ut_color("in_logic")
+            elif out_of_logic:
+                self.color = "#" + get_ut_color("out_of_logic")
+            elif glitches:
+                self.color = "#" + get_ut_color("glitched")
+            else:
+                self.color = "#" + get_ut_color("collected")
+
+    class APLocationSplit(ApLocation):
+        color_1 = ColorProperty("#" + get_ut_color("error"))
+        color_2 = ColorProperty("#" + get_ut_color("error"))
+        color_3 = ColorProperty("#" + get_ut_color("error"))
+        color_4 = ColorProperty("#" + get_ut_color("error"))
+
+        def __init__(self, sections, parent, label=None, on_select=None, **kwargs):
+            super().__init__(sections, parent, label=label, on_select=on_select, **kwargs)
+
+        @staticmethod
+        def update_color(self, locationDict):
+            color_list = Counter()
+
+            def sort_status(pair) -> float:
+                if pair[0] == "out_of_logic":
+                    return 0
+                if pair[0] == "in_logic":
+                    return 999999999
+                if pair[0] == "hinted_in_logic":
+                    return 8888888
+                return pair[1] + (ord(pair[0][0]) / 10)
+
+            for status in locationDict.values():
+                if status == "collected":
+                    continue
+                color_list[status] += 1
+
+            color_list = [k for k, v in sorted(color_list.items(), key=sort_status, reverse=True)]
+            if color_list:
+                color_list = (color_list * max(2, (4 // len(color_list))))[:4]
+                self.color_1 = "#" + get_ut_color(color_list[0])
+                self.color_2 = "#" + get_ut_color(color_list[1])
+                self.color_3 = "#" + get_ut_color(color_list[2])
+                self.color_4 = "#" + get_ut_color(color_list[3])
+            else:
+                self.color_1 = "#" + get_ut_color("collected")
+                self.color_2 = "#" + get_ut_color("collected")
+                self.color_3 = "#" + get_ut_color("collected")
+                self.color_4 = "#" + get_ut_color("collected")
+
+    return APLocationMixed, APLocationSplit
