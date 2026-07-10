@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+PACK_LOADED_COLOR = (0.2, 0.9, 0.35, 1)
+PACK_MATCHING_COLOR = (1.0, 0.92, 0.2, 1)
+
+
+def _rgb_to_markup_color(rgb: tuple[float, float, float, float]) -> str:
+    r, g, b, _ = rgb
+    return f"{int(r * 255):02x}{int(g * 255):02x}{int(b * 255):02x}"
+
 
 def create_mapping_tracker_class(BoxLayout, ap_location_split, ap_location_mixed):
     class MappingTracker(BoxLayout):
@@ -55,17 +63,6 @@ def apply_mapping_manager_features(
     MarkupDropdown,
     get_ut_color,
 ):
-    def load_mapping_preset_dialog(self):
-        from Utils import messagebox
-
-        from .mapping import get_mapping_preset_block_reason
-
-        block_reason = get_mapping_preset_block_reason(self.ctx)
-        if block_reason:
-            messagebox("Cannot Load Preset", block_reason, error=True)
-            return
-        self.ctx.load_mapping_preset()
-
     def open_mapping_dropdown(self, item):
         if not self.ctx.mapping_tabs:
             return
@@ -89,7 +86,77 @@ def apply_mapping_manager_features(
             return f"[color={get_ut_color('in_logic')}]{tab['name']}[/color]"
         return tab["name"]
 
-    manager_class.load_mapping_preset_dialog = load_mapping_preset_dialog
+    def get_visual_pack_menu_text(self, entry) -> str:
+        if self.mapping_preset_path == entry.path:
+            color = _rgb_to_markup_color(PACK_LOADED_COLOR)
+            return f"[color={color}]{entry.game}[/color]"
+        if self.ctx.game and entry.game == self.ctx.game:
+            color = _rgb_to_markup_color(PACK_MATCHING_COLOR)
+            return f"[color={color}]{entry.game}[/color]"
+        return entry.game
+
+    def _update_visual_pack_dropdown_label(self) -> None:
+        if not hasattr(self, "vt_pack_dropdown_text"):
+            return
+        if self.mapping_preset_path and hasattr(self, "_cached_visual_presets"):
+            for entry in self._cached_visual_presets:
+                if entry.path == self.mapping_preset_path:
+                    self.visual_pack_label = entry.game
+                    self.vt_pack_dropdown_text.text = entry.game
+                    return
+        if not getattr(self, "_cached_visual_presets", None):
+            self.visual_pack_label = "No packs found"
+        else:
+            self.visual_pack_label = "Select a pack..."
+        self.vt_pack_dropdown_text.text = self.visual_pack_label
+
+    def open_visual_pack_dropdown(self, item):
+        if not getattr(self, "_cached_visual_presets", None):
+            return
+        dropdown_menu = MarkupDropdown(caller=item, hor_growth="right", ver_growth="down")
+        dropdown_menu.items = [
+            {
+                "text": self.get_visual_pack_menu_text(entry),
+                "on_release": lambda path=entry.path, menu=dropdown_menu: self.visual_pack_dropdown_callback(menu, path),
+            }
+            for entry in self._cached_visual_presets
+        ]
+        dropdown_menu.open()
+
+    def visual_pack_dropdown_callback(self, menu: MDDropdownMenu, preset_path: str):
+        menu.dismiss()
+        self.load_visual_pack(preset_path)
+
+    def load_visual_pack(self, preset_path: str) -> None:
+        from Utils import messagebox
+
+        from .mapping import get_mapping_preset_block_reason
+
+        block_reason = get_mapping_preset_block_reason(self.ctx)
+        if block_reason:
+            messagebox("Cannot Load Preset", block_reason, error=True)
+            return
+        self.ctx.load_mapping_preset(preset_path)
+        self.repaint_visual_packs_list()
+
+    def refresh_visual_packs_list(self) -> None:
+        from .mapping import list_visual_presets
+
+        self._cached_visual_presets = list_visual_presets()
+        self._update_visual_pack_dropdown_label()
+
+    def repaint_visual_packs_list(self) -> None:
+        if not hasattr(self, "vt_pack_dropdown_text"):
+            return
+        self._update_visual_pack_dropdown_label()
+
     manager_class.open_mapping_dropdown = open_mapping_dropdown
     manager_class.mapping_dropdown_callback = mapping_dropdown_callback
     manager_class.get_mapping_tab_text = get_mapping_tab_text
+    manager_class.get_visual_pack_menu_text = get_visual_pack_menu_text
+    manager_class._update_visual_pack_dropdown_label = _update_visual_pack_dropdown_label
+    manager_class.open_visual_pack_dropdown = open_visual_pack_dropdown
+    manager_class.visual_pack_dropdown_callback = visual_pack_dropdown_callback
+    manager_class.load_visual_pack = load_visual_pack
+    manager_class.refresh_visual_packs_list = refresh_visual_packs_list
+    manager_class.repaint_visual_packs_list = repaint_visual_packs_list

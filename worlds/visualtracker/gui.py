@@ -5,7 +5,9 @@ import pkgutil
 
 def load_visualtracker_kv() -> None:
     from kivy.lang import Builder
+    from worlds.tracker.TrackerKivy import SomethingNeatJustToMakePythonHappy  # noqa: F401 - registers ap:zip image loader
 
+    SomethingNeatJustToMakePythonHappy()
     data = pkgutil.get_data("worlds.visualtracker", "visualtracker.kv").decode()
     Builder.load_string(data)
 

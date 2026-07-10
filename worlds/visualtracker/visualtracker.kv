@@ -52,18 +52,12 @@
             size_hint: None, None
             size: self.minimum_size
             spacing: dp(10)
-            MDButton:
-                style: "filled"
-                disabled: not app.mapping_preset_enabled
-                on_release: app.load_mapping_preset_dialog()
-                MDButtonText:
-                    text: "Load Preset"
             MDDropDownItem:
                 id: mapping_tab_list
                 on_release: app.open_mapping_dropdown(self)
                 MDDropDownItemText:
                     id: mapping_drop_text
-                    text: "Mapping Tab: " + app.mapping_current_tab
+                    text: app.mapping_current_tab
         ApAsyncImage:
             id: tracker_map
             source: app.mapping_source
