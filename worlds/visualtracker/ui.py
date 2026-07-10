@@ -63,22 +63,63 @@ def apply_mapping_manager_features(
     MarkupDropdown,
     get_ut_color,
 ):
-    def open_mapping_dropdown(self, item):
+    def refresh_mapping_tab_selectors(self) -> None:
+        from kivy.metrics import dp
+        from kivymd.uix.dropdownitem import MDDropDownItem, MDDropDownItemText
+
+        from .mapping import _path_to_label, _resolve_leaf_path, _siblings_at_depth
+
+        if not self.ctx.mapping_page or not hasattr(self.ctx.mapping_page.ids, "mapping_tab_selectors"):
+            return
+        selectors = self.ctx.mapping_page.ids.mapping_tab_selectors
+        selectors.clear_widgets()
         if not self.ctx.mapping_tabs:
             return
+
+        leaf_path = _resolve_leaf_path(self.ctx.mapping_tabs, list(self.ctx.mapping_tab_path))
+        for depth in range(len(leaf_path)):
+            siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
+            if not siblings:
+                continue
+            index = leaf_path[depth]
+            tab = siblings[index]
+            item_text = MDDropDownItemText(markup=True)
+            item = MDDropDownItem(
+                item_text,
+                size_hint=(None, None),
+                size_hint_y=None,
+                height=dp(48),
+            )
+            item.bind(on_release=lambda widget, d=depth: self.open_mapping_dropdown(widget, d))
+            selectors.add_widget(item)
+            # Set label after the item wires up MDDropDownItemText; otherwise the
+            # canvas texture stays empty and the closed dropdown looks blank.
+            item_text.text = self.get_mapping_tab_text(tab)
+        self.mapping_current_tab = _path_to_label(self.ctx.mapping_tabs, leaf_path)
+
+    def open_mapping_dropdown(self, item, depth: int = 0):
+        from .mapping import _resolve_leaf_path, _siblings_at_depth
+
+        if not self.ctx.mapping_tabs:
+            return
+        leaf_path = _resolve_leaf_path(self.ctx.mapping_tabs, list(self.ctx.mapping_tab_path))
+        siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
         dropdown_menu = MarkupDropdown(caller=item, hor_growth="right", ver_growth="down")
         dropdown_menu.items = [
             {
                 "text": self.get_mapping_tab_text(tab),
-                "on_release": lambda i=i, menu=dropdown_menu: self.mapping_dropdown_callback(menu, i),
+                "on_release": lambda i=i, menu=dropdown_menu, d=depth: self.mapping_dropdown_callback(menu, d, i),
             }
-            for i, tab in enumerate(self.ctx.mapping_tabs)
+            for i, tab in enumerate(siblings)
         ]
         dropdown_menu.open()
 
-    def mapping_dropdown_callback(self, menu: MDDropdownMenu, tab_index: int):
+    def mapping_dropdown_callback(self, menu: MDDropdownMenu, depth: int, tab_index: int):
+        from .mapping import _resolve_leaf_path
+
         menu.dismiss()
-        self.ctx.load_mapping_tab(tab_index)
+        new_path = [*self.ctx.mapping_tab_path[:depth], tab_index]
+        self.ctx.load_mapping_tab(_resolve_leaf_path(self.ctx.mapping_tabs, new_path))
         self.ctx.updateTracker()
 
     def get_mapping_tab_text(self, tab: dict) -> str:
@@ -152,6 +193,7 @@ def apply_mapping_manager_features(
 
     manager_class.open_mapping_dropdown = open_mapping_dropdown
     manager_class.mapping_dropdown_callback = mapping_dropdown_callback
+    manager_class.refresh_mapping_tab_selectors = refresh_mapping_tab_selectors
     manager_class.get_mapping_tab_text = get_mapping_tab_text
     manager_class.get_visual_pack_menu_text = get_visual_pack_menu_text
     manager_class._update_visual_pack_dropdown_label = _update_visual_pack_dropdown_label

@@ -52,12 +52,12 @@
             size_hint: None, None
             size: self.minimum_size
             spacing: dp(10)
-            MDDropDownItem:
-                id: mapping_tab_list
-                on_release: app.open_mapping_dropdown(self)
-                MDDropDownItemText:
-                    id: mapping_drop_text
-                    text: app.mapping_current_tab
+            BoxLayout:
+                id: mapping_tab_selectors
+                orientation: "horizontal"
+                size_hint: None, None
+                size: self.minimum_size
+                spacing: dp(10)
         ApAsyncImage:
             id: tracker_map
             source: app.mapping_source

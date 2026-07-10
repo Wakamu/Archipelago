@@ -27,6 +27,7 @@ class VisualTrackerContext(TrackerGameContext):
     mapping_coord_dict: dict[int, list] = {}
     mapping_page = None
     mapping_tabs: list[dict] = []
+    mapping_tab_path: list[int] = []
     mapping_tab_index: int | None = None
     mapping_root_path: str | None = None
     mapping_preset_path: str | None = None
@@ -255,8 +256,8 @@ class VisualTrackerContext(TrackerGameContext):
         await self.get_username()
         await self.send_connect(game="")
 
-    def load_mapping_tab(self, tab_index: int | str):
-        load_mapping_tab(self, logger, tab_index)
+    def load_mapping_tab(self, tab_path: list[int] | int | str):
+        load_mapping_tab(self, logger, tab_path)
 
     def mapping_tab_has_available_checks(self, tab: dict) -> bool:
         return mapping_tab_has_available_checks(self, tab)
