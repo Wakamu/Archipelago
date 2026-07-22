@@ -98,20 +98,34 @@ def apply_mapping_manager_features(
         self.mapping_current_tab = _path_to_label(self.ctx.mapping_tabs, leaf_path)
 
     def open_mapping_dropdown(self, item, depth: int = 0):
-        from .mapping import _resolve_leaf_path, _siblings_at_depth
+        from .mapping import _resolve_leaf_path, _siblings_at_depth, mapping_tab_is_listed
 
         if not self.ctx.mapping_tabs:
             return
         leaf_path = _resolve_leaf_path(self.ctx.mapping_tabs, list(self.ctx.mapping_tab_path))
         siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
-        dropdown_menu = MarkupDropdown(caller=item, hor_growth="right", ver_growth="down")
-        dropdown_menu.items = [
-            {
-                "text": self.get_mapping_tab_text(tab),
-                "on_release": lambda i=i, menu=dropdown_menu, d=depth: self.mapping_dropdown_callback(menu, d, i),
-            }
+        show_out_of_logic = bool(getattr(self, "show_out_of_logic_tabs", False))
+        entries = [
+            (i, tab)
             for i, tab in enumerate(siblings)
+            if mapping_tab_is_listed(self.ctx, tab, show_out_of_logic=show_out_of_logic)
         ]
+        dropdown_menu = MarkupDropdown(caller=item, hor_growth="right", ver_growth="down")
+        if not entries:
+            dropdown_menu.items = [
+                {
+                    "text": "No in-logic / glitched tabs",
+                    "on_release": lambda menu=dropdown_menu: menu.dismiss(),
+                }
+            ]
+        else:
+            dropdown_menu.items = [
+                {
+                    "text": self.get_mapping_tab_text(tab),
+                    "on_release": lambda i=i, menu=dropdown_menu, d=depth: self.mapping_dropdown_callback(menu, d, i),
+                }
+                for i, tab in entries
+            ]
         dropdown_menu.open()
 
     def mapping_dropdown_callback(self, menu: MDDropdownMenu, depth: int, tab_index: int):
@@ -123,9 +137,23 @@ def apply_mapping_manager_features(
         self.ctx.updateTracker()
 
     def get_mapping_tab_text(self, tab: dict) -> str:
-        if self.ctx.mapping_tab_has_available_checks(tab):
+        from .mapping import mapping_tab_has_status
+
+        if mapping_tab_has_status(self.ctx, tab, in_logic=True):
             return f"[color={get_ut_color('in_logic')}]{tab['name']}[/color]"
+        if mapping_tab_has_status(self.ctx, tab, glitched=True):
+            return f"[color={get_ut_color('glitched')}]{tab['name']}[/color]"
         return tab["name"]
+
+    def on_show_out_of_logic_tabs(self, _instance, _value) -> None:
+        from worlds.tracker.TrackerClient import logger
+
+        from .mapping import maybe_reselect_filtered_mapping_tab
+
+        if maybe_reselect_filtered_mapping_tab(self.ctx, logger):
+            self.ctx.updateTracker()
+        elif hasattr(self, "refresh_mapping_tab_selectors"):
+            self.refresh_mapping_tab_selectors()
 
     def get_visual_pack_menu_text(self, entry) -> str:
         if self.mapping_preset_path == entry.path:
@@ -195,6 +223,7 @@ def apply_mapping_manager_features(
     manager_class.mapping_dropdown_callback = mapping_dropdown_callback
     manager_class.refresh_mapping_tab_selectors = refresh_mapping_tab_selectors
     manager_class.get_mapping_tab_text = get_mapping_tab_text
+    manager_class.on_show_out_of_logic_tabs = on_show_out_of_logic_tabs
     manager_class.get_visual_pack_menu_text = get_visual_pack_menu_text
     manager_class._update_visual_pack_dropdown_label = _update_visual_pack_dropdown_label
     manager_class.open_visual_pack_dropdown = open_visual_pack_dropdown
@@ -202,3 +231,60 @@ def apply_mapping_manager_features(
     manager_class.load_visual_pack = load_visual_pack
     manager_class.refresh_visual_packs_list = refresh_visual_packs_list
     manager_class.repaint_visual_packs_list = repaint_visual_packs_list
+
+
+def apply_items_manager_features(
+    manager_class,
+    *,
+    get_ut_color,
+):
+    from .items import (
+        ITEM_QUALITIES,
+        build_inventory_entries,
+        filter_inventory_entries,
+        format_inventory_entry,
+    )
+
+    def _enabled_item_filters(self) -> set[str]:
+        enabled = set()
+        for quality in ITEM_QUALITIES:
+            widget = getattr(self, "item_filter_widgets", {}).get(quality)
+            if widget is None or widget.active:
+                enabled.add(quality)
+        return enabled
+
+    def refresh_items_tab(self, tracker_state=None) -> None:
+        if self.ctx.items_page is None:
+            return
+        if tracker_state is None:
+            tracker_state = getattr(self.ctx, "_last_tracker_state", None)
+
+        entries = build_inventory_entries(self.ctx, tracker_state)
+        enabled = self._enabled_item_filters()
+        filtered = filter_inventory_entries(entries, enabled)
+
+        if not self.ctx.game:
+            self.ctx.items_page.data = [{"text": "Connect to a slot to view received items."}]
+            if hasattr(self, "vt_items_total_label"):
+                self.vt_items_total_label.text = "Items: 0"
+                self.vt_items_filtered_label.text = "Shown: 0"
+            return
+
+        if not entries:
+            self.ctx.items_page.data = [{"text": "No items received yet."}]
+        elif not filtered:
+            self.ctx.items_page.data = [{"text": "No items match the selected quality filters."}]
+        else:
+            self.ctx.items_page.data = [
+                {"text": format_inventory_entry(entry, get_ut_color)}
+                for entry in filtered
+            ]
+
+        if hasattr(self, "vt_items_total_label"):
+            total_count = sum(entry.count for entry in entries)
+            shown_count = sum(entry.count for entry in filtered)
+            self.vt_items_total_label.text = f"Items: {total_count}"
+            self.vt_items_filtered_label.text = f"Shown: {shown_count}"
+
+    manager_class._enabled_item_filters = _enabled_item_filters
+    manager_class.refresh_items_tab = refresh_items_tab

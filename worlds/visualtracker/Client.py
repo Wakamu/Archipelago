@@ -7,8 +7,10 @@ import sys
 from CommonClient import gui_enabled, get_base_parser, handle_url_arg, server_loop
 from worlds.tracker.TrackerClient import TrackerGameContext, CurrentTrackerState, logger
 from .gui import (
+    build_items_tab,
     build_mapping_tab,
     load_visualtracker_kv,
+    update_items_tab,
     update_mapping_pin_status,
 )
 from .mapping import (
@@ -31,6 +33,13 @@ class VisualTrackerContext(TrackerGameContext):
     mapping_tab_index: int | None = None
     mapping_root_path: str | None = None
     mapping_preset_path: str | None = None
+    items_page = None
+    _last_tracker_state = None
+    # Visual Tracker skips UT's Map Page GUI (see build_gui). UT's default
+    # map_page_coords_func returns {}, which crashes load_map with
+    # "not enough values to unpack (expected 3, got 0)". Provide a safe
+    # no-op that matches the 3-tuple load_map expects.
+    map_page_coords_func = staticmethod(lambda *args: ({}, {}, {}))
 
     def make_gui(self):
         base_manager_class = super().make_gui()
@@ -40,7 +49,7 @@ class VisualTrackerContext(TrackerGameContext):
         from kvui import MarkupDropdown, MDButton, MDButtonText
         from worlds.tracker.TrackerClient import get_ut_color
 
-        from .ui import apply_mapping_manager_features
+        from .ui import apply_items_manager_features, apply_mapping_manager_features
 
         class VisualTrackerManager(base_manager_class):
             mapping_source = StringProperty("")
@@ -50,6 +59,7 @@ class VisualTrackerContext(TrackerGameContext):
             mapping_preset_enabled = BooleanProperty(False)
             mapping_has_preset = BooleanProperty(False)
             visual_pack_label = StringProperty("Select a pack...")
+            show_out_of_logic_tabs = BooleanProperty(False)
             base_title = "Archipelago Visual Tracker"
 
             def build(manager_self):
@@ -71,6 +81,9 @@ class VisualTrackerContext(TrackerGameContext):
 
                 if manager_self.ctx.mapping_page is None:
                     build_mapping_tab(manager_self.ctx, manager_self)
+                if manager_self.ctx.items_page is None:
+                    build_items_tab(manager_self.ctx, manager_self)
+                if manager_self.ctx.mapping_page is not None:
                     startup_tab = manager_self.screens.current_tab
                     if startup_tab is not None:
                         for tab in manager_self.tabs.children:
@@ -148,6 +161,22 @@ class VisualTrackerContext(TrackerGameContext):
                 sidebar_content.add_widget(packs_section)
 
                 sidebar_content.add_widget(MDDivider())
+                from .gui import ItemQualityFilter
+
+                ool_filter = ItemQualityFilter(
+                    text="Show out-of-logic tabs",
+                    filter_key="out_of_logic_tabs",
+                    active=False,
+                )
+
+                def _on_ool_filter(_instance, value):
+                    manager_self.show_out_of_logic_tabs = bool(value)
+
+                ool_filter.bind(active=_on_ool_filter)
+                manager_self.bind(show_out_of_logic_tabs=manager_self.on_show_out_of_logic_tabs)
+                sidebar_content.add_widget(ool_filter)
+
+                sidebar_content.add_widget(MDDivider())
                 sidebar_content.add_widget(manager_self.vt_selection_title)
                 sidebar_content.add_widget(manager_self.vt_selection_body)
 
@@ -155,6 +184,7 @@ class VisualTrackerContext(TrackerGameContext):
                 sidebar.add_widget(sidebar_scroll)
                 manager_self.main_area_container.add_widget(sidebar)
                 Clock.schedule_once(lambda _dt: manager_self.refresh_visual_packs_list(), 0)
+                Clock.schedule_once(lambda _dt: manager_self.refresh_items_tab(), 0)
 
             def update_texts(manager_self, dt):
                 super().update_texts(dt)
@@ -175,6 +205,8 @@ class VisualTrackerContext(TrackerGameContext):
                 manager_self.mapping_has_preset = bool(manager_self.ctx.mapping_tabs)
 
             def update_mapping_selection(manager_self, title: str, body: str):
+                if not hasattr(manager_self, "vt_selection_title"):
+                    return
                 manager_self.vt_selection_title.text = title
                 manager_self.vt_selection_body.text = body
 
@@ -182,6 +214,10 @@ class VisualTrackerContext(TrackerGameContext):
             VisualTrackerManager,
             MDDropdownMenu=MDDropdownMenu,
             MarkupDropdown=MarkupDropdown,
+            get_ut_color=get_ut_color,
+        )
+        apply_items_manager_features(
+            VisualTrackerManager,
             get_ut_color=get_ut_color,
         )
 
@@ -193,10 +229,31 @@ class VisualTrackerContext(TrackerGameContext):
         load_visualtracker_kv()
 
     def build_gui(self, manager):
-        # Mapping tab is created after the main window finishes building.
+        # Mapping/Items tabs are created after the main window finishes building.
+        # Skip UT's Map Page GUI; Visual Tracker uses its own Mapping tab instead.
+        # Keep a safe coords fallback in case UT connect logic still calls load_map.
+        self.map_page_coords_func = lambda *args: ({}, {}, {})
+        return
+
+    def load_map(self, map_id: typing.Union[int, str, None] = None):
+        # UT Map Page is not used by Visual Tracker. Skipping avoids the UT crash
+        # when map_page_coords_func is still the empty-dict fallback.
+        return
+
+    def load_pack(self):
+        # Same as load_map: VT does not host UT poptracker map packs.
+        self.tracker_world = None
+
+    def update_location_icon_coords(self):
         return
 
     def updateTracker(self) -> CurrentTrackerState:
+        from .mapping import (
+            ensure_preferred_mapping_tab,
+            find_preferred_mapping_tab_path,
+            maybe_reselect_filtered_mapping_tab,
+        )
+
         hints = {}
         if f"_read_hints_{self.team}_{self.slot}" in self.stored_data:
             from NetUtils import HintStatus
@@ -208,7 +265,19 @@ class VisualTrackerContext(TrackerGameContext):
                 and self.slot_concerns_self(hint["finding_player"])
             }
         result = super().updateTracker()
+        if getattr(self, "_prefer_in_logic_tab", False):
+            if ensure_preferred_mapping_tab(self, logger):
+                self._prefer_in_logic_tab = False
+            elif find_preferred_mapping_tab_path(self, allow_glitched_fallback=False) is not None:
+                self._prefer_in_logic_tab = False
+            elif self.tracker_core and self.tracker_core.multiworld:
+                # Tracker logic is ready and no in-logic tabs exist yet.
+                self._prefer_in_logic_tab = False
+        maybe_reselect_filtered_mapping_tab(self, logger)
         update_mapping_pin_status(self, hints)
+        update_items_tab(self, result)
+        if self.ui and hasattr(self.ui, "refresh_mapping_tab_selectors"):
+            self.ui.refresh_mapping_tab_selectors()
         if self.selected_mapping_pin:
             self.select_mapping_pin(self.selected_mapping_pin)
         return result

@@ -35,6 +35,7 @@ REQUIRED_FILES = (
     "__init__.py",
     "Client.py",
     "mapping.py",
+    "items.py",
     "ui.py",
     "gui.py",
     "widgets.py",

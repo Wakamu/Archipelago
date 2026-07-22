@@ -80,3 +80,34 @@
                     y: tracker_map.norm_image_size[1] / tracker_map.texture_size[1] if tracker_map.texture_size[1] > 0 else 1
             canvas.after:
                 PopMatrix:
+
+<ItemQualityFilter>:
+    orientation: "horizontal"
+    spacing: dp(4)
+    size_hint_y: None
+    height: dp(32)
+    text: ""
+    filter_key: ""
+    active: True
+    MDCheckbox:
+        id: quality_checkbox
+        active: root.active
+        on_active: root.active = self.active
+    MDLabel:
+        adaptive_size: True
+        text: root.text
+        valign: "center"
+
+<ItemsView>:
+    viewclass: 'SelectableLabel'
+    scroll_y: 1
+    scroll_type: ["content", "bars"]
+    bar_width: dp(12)
+    effect_cls: "ScrollEffect"
+    SelectableRecycleBoxLayout:
+        default_size: None, dp(24)
+        default_size_hint: 1, None
+        size_hint_y: None
+        height: self.minimum_height
+        orientation: 'vertical'
+        spacing: dp(3)

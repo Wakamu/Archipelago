@@ -253,6 +253,7 @@ def clear_mapping_state(ctx, empty_label: str = "No preset loaded") -> None:
     ctx.mapping_tab_index = None
     ctx.mapping_root_path = None
     ctx.mapping_preset_path = None
+    ctx._prefer_in_logic_tab = False
     if hasattr(ctx, "selected_mapping_pin"):
         ctx.selected_mapping_pin = None
     if ctx.ui:
@@ -327,7 +328,11 @@ def load_mapping_preset(ctx, logger: logging.Logger, preset_path: str | None = N
             return
 
         load_mapping_tab(ctx, logger, [0])
+        ctx._prefer_in_logic_tab = True
         ctx.updateTracker()
+        if ensure_preferred_mapping_tab(ctx, logger):
+            ctx._prefer_in_logic_tab = False
+            ctx.updateTracker()
         logger.info(f"Loaded mapping preset with {len(leaf_tabs)} map tab(s).")
         if ctx.ui and hasattr(ctx.ui, "refresh_mapping_tab_selectors"):
             ctx.ui.refresh_mapping_tab_selectors()
@@ -372,9 +377,94 @@ def load_mapping_tab(ctx, logger: logging.Logger, tab_path: list[int] | int | st
 
 
 def mapping_tab_has_available_checks(ctx, tab: dict) -> bool:
-    if not ctx.tracker_core or not ctx.tracker_core.locations_available:
+    return mapping_tab_has_status(ctx, tab, in_logic=True)
+
+
+def mapping_tab_has_status(ctx, tab: dict, *, in_logic: bool = False, glitched: bool = False) -> bool:
+    if not ctx.tracker_core:
         return False
     children = tab.get("children")
     if children:
-        return any(mapping_tab_has_available_checks(ctx, child) for child in children)
-    return any(location_id in ctx.tracker_core.locations_available for location_id in tab.get("location_ids", []))
+        return any(
+            mapping_tab_has_status(ctx, child, in_logic=in_logic, glitched=glitched)
+            for child in children
+        )
+    location_ids = tab.get("location_ids", [])
+    if in_logic and any(
+        location_id in ctx.tracker_core.locations_available for location_id in location_ids
+    ):
+        return True
+    if glitched and any(
+        location_id in ctx.tracker_core.glitched_locations for location_id in location_ids
+    ):
+        return True
+    return False
+
+
+def mapping_tab_is_listed(ctx, tab: dict, *, show_out_of_logic: bool) -> bool:
+    if show_out_of_logic:
+        return True
+    return mapping_tab_has_status(ctx, tab, in_logic=True, glitched=True)
+
+
+def find_first_tab_path(tabs: list[dict], predicate, path_prefix: list[int] | None = None) -> list[int] | None:
+    prefix = path_prefix or []
+    for index, tab in enumerate(tabs):
+        path = [*prefix, index]
+        children = tab.get("children")
+        if children:
+            found = find_first_tab_path(children, predicate, path)
+            if found is not None:
+                return found
+        elif predicate(tab):
+            return path
+    return None
+
+
+def find_preferred_mapping_tab_path(ctx, *, allow_glitched_fallback: bool = True) -> list[int] | None:
+    if not ctx.mapping_tabs:
+        return None
+    path = find_first_tab_path(
+        ctx.mapping_tabs,
+        lambda tab: mapping_tab_has_status(ctx, tab, in_logic=True),
+    )
+    if path is not None:
+        return path
+    if allow_glitched_fallback:
+        return find_first_tab_path(
+            ctx.mapping_tabs,
+            lambda tab: mapping_tab_has_status(ctx, tab, glitched=True),
+        )
+    return None
+
+
+def ensure_preferred_mapping_tab(ctx, logger: logging.Logger) -> bool:
+    """Select the first in-logic tab when available. Returns True if the tab changed."""
+    if not ctx.ui or not ctx.mapping_tabs:
+        return False
+    preferred = find_preferred_mapping_tab_path(ctx, allow_glitched_fallback=False)
+    if preferred is None:
+        return False
+    if preferred == list(ctx.mapping_tab_path):
+        return False
+    load_mapping_tab(ctx, logger, preferred)
+    return True
+
+
+def maybe_reselect_filtered_mapping_tab(ctx, logger: logging.Logger) -> bool:
+    """If out-of-logic tabs are hidden and the current tab has nothing reachable, jump away."""
+    if not ctx.ui or not ctx.mapping_tabs:
+        return False
+    show_out_of_logic = bool(getattr(ctx.ui, "show_out_of_logic_tabs", False))
+    if show_out_of_logic:
+        return False
+    current = _tab_at_path(ctx.mapping_tabs, list(ctx.mapping_tab_path))
+    if current is not None and mapping_tab_is_listed(ctx, current, show_out_of_logic=False):
+        return False
+    preferred = find_preferred_mapping_tab_path(ctx, allow_glitched_fallback=True)
+    if preferred is None:
+        return False
+    if preferred == list(ctx.mapping_tab_path):
+        return False
+    load_mapping_tab(ctx, logger, preferred)
+    return True
