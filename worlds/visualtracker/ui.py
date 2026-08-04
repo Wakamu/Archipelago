@@ -13,9 +13,18 @@ def _rgb_to_markup_color(rgb: tuple[float, float, float, float]) -> str:
 
 def create_mapping_tracker_class(BoxLayout, ap_location_split, ap_location_mixed):
     class MappingTracker(BoxLayout):
+        def reset_map_view(self) -> None:
+            host = self.ids.get("map_host")
+            if host is not None:
+                host.reset_view()
+
         def map_window_to_image_coords(self, x: float, y: float) -> tuple[int, int] | None:
             tracker_map = self.ids.tracker_map
-            local_x, local_y = tracker_map.to_widget(x, y)
+            parent = tracker_map.parent
+            if parent is None:
+                return None
+            ox, oy = parent.to_window(0, 0, initial=False, relative=True)
+            local_x, local_y = x - ox, y - oy
             norm_w, norm_h = tracker_map.norm_image_size
             tex_w, tex_h = tracker_map.texture_size
             if norm_w <= 0 or norm_h <= 0 or tex_w <= 0 or tex_h <= 0:
@@ -28,6 +37,26 @@ def create_mapping_tracker_class(BoxLayout, ap_location_split, ap_location_mixed
             image_y = int((norm_h - (local_y - offset_y)) * (tex_h / norm_h))
             return image_x, image_y
 
+        def on_touch_down(self, touch):
+            # Children (map host scroll zoom, dropdowns, etc.) first. Never grab.
+            if super().on_touch_down(touch):
+                return True
+            # Pin hit-testing uses hover space (same as Universal Tracker pins).
+            button = getattr(touch, "button", "left")
+            if button != "left" or getattr(touch, "is_mouse_scrolling", False):
+                return False
+            canvas = self.ids.get("location_canvas")
+            if canvas is None:
+                return False
+            for pin in canvas.children:
+                if not getattr(pin, "hovered", False):
+                    continue
+                callback = getattr(pin, "on_select_callback", None)
+                if callback is not None:
+                    callback(pin)
+                    return True
+            return False
+
         def load_coords(
             self,
             coords: dict[tuple, tuple[list[int], int | None, str | None]],
@@ -35,6 +64,7 @@ def create_mapping_tracker_class(BoxLayout, ap_location_split, ap_location_mixed
             default_loc_size: int = 32,
             on_select=None,
         ) -> dict[int, list]:
+            self.reset_map_view()
             self.ids.location_canvas.clear_widgets()
             return_dict: dict[int, list] = defaultdict(list)
             for coord, (sections, size, label) in coords.items():
@@ -76,7 +106,13 @@ def apply_mapping_manager_features(
         if not self.ctx.mapping_tabs:
             return
 
-        leaf_path = _resolve_leaf_path(self.ctx.mapping_tabs, list(self.ctx.mapping_tab_path))
+        show_out_of_logic = bool(getattr(self, "show_out_of_logic_tabs", False))
+        leaf_path = _resolve_leaf_path(
+            self.ctx.mapping_tabs,
+            list(self.ctx.mapping_tab_path),
+            ctx=self.ctx,
+            show_out_of_logic=show_out_of_logic,
+        )
         for depth in range(len(leaf_path)):
             siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
             if not siblings:
@@ -102,9 +138,14 @@ def apply_mapping_manager_features(
 
         if not self.ctx.mapping_tabs:
             return
-        leaf_path = _resolve_leaf_path(self.ctx.mapping_tabs, list(self.ctx.mapping_tab_path))
-        siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
         show_out_of_logic = bool(getattr(self, "show_out_of_logic_tabs", False))
+        leaf_path = _resolve_leaf_path(
+            self.ctx.mapping_tabs,
+            list(self.ctx.mapping_tab_path),
+            ctx=self.ctx,
+            show_out_of_logic=show_out_of_logic,
+        )
+        siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
         entries = [
             (i, tab)
             for i, tab in enumerate(siblings)
@@ -129,11 +170,11 @@ def apply_mapping_manager_features(
         dropdown_menu.open()
 
     def mapping_dropdown_callback(self, menu: MDDropdownMenu, depth: int, tab_index: int):
-        from .mapping import _resolve_leaf_path
-
         menu.dismiss()
+        # load_mapping_tab resolves folders to the first listed leaf when
+        # out-of-logic tabs are hidden (not always children[0]).
         new_path = [*self.ctx.mapping_tab_path[:depth], tab_index]
-        self.ctx.load_mapping_tab(_resolve_leaf_path(self.ctx.mapping_tabs, new_path))
+        self.ctx.load_mapping_tab(new_path)
         self.ctx.updateTracker()
 
     def get_mapping_tab_text(self, tab: dict) -> str:

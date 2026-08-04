@@ -3,6 +3,188 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable
 
+from kivy.graphics.transformation import Matrix
+from kivy.uix.scatter import Scatter
+from kivy.uix.stencilview import StencilView
+
+
+class MapScatter(Scatter):
+    """Transform-only scatter. Never grabs — all do_* stay False."""
+
+    def __init__(self, **kwargs):
+        kwargs.setdefault("do_rotation", False)
+        kwargs.setdefault("do_scale", False)
+        kwargs.setdefault("do_translation", False)
+        kwargs.setdefault("auto_bring_to_front", False)
+        super().__init__(**kwargs)
+        self.scale_min = 1.0
+        self.scale_max = 8.0
+
+    def on_touch_down(self, touch):
+        # Forward to children in local space; never run Scatter's grab/transform path.
+        touch.push()
+        touch.apply_transform_2d(self.to_local)
+        handled = False
+        for child in self.children[:]:
+            if child.dispatch("on_touch_down", touch):
+                handled = True
+                break
+        touch.pop()
+        return handled
+
+    def on_touch_move(self, touch):
+        touch.push()
+        touch.apply_transform_2d(self.to_local)
+        handled = False
+        for child in self.children[:]:
+            if child.dispatch("on_touch_move", touch):
+                handled = True
+                break
+        touch.pop()
+        return handled
+
+    def on_touch_up(self, touch):
+        touch.push()
+        touch.apply_transform_2d(self.to_local)
+        handled = False
+        for child in self.children[:]:
+            if child.dispatch("on_touch_up", touch):
+                handled = True
+                break
+        touch.pop()
+        return handled
+
+
+class ZoomableMapHost(StencilView):
+    """Clipped viewport. Zooms via MapScatter matrix (not child resize)."""
+
+    ZOOM_STEP = 1.15
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.bind(size=self._sync_scatter, pos=self._sync_scatter, children=self._sync_scatter)
+
+    def _scatter(self):
+        return self.children[0] if self.children else None
+
+    def _content(self):
+        scatter = self._scatter()
+        if scatter is None or not scatter.children:
+            return None
+        return scatter.children[0]
+
+    def _sync_scatter(self, *_args) -> None:
+        scatter = self._scatter()
+        if scatter is None or self.width <= 0 or self.height <= 0:
+            return
+        scatter.size = self.size
+        content = self._content()
+        if content is not None:
+            content.size_hint = (None, None)
+            content.size = self.size
+            content.pos = (0, 0)
+        if scatter.scale <= 1.0 + 1e-6:
+            scatter.transform = Matrix()
+
+    def reset_view(self) -> None:
+        scatter = self._scatter()
+        if scatter is None:
+            return
+        # Identity transform (don't use scale=1 — that scales around center).
+        scatter.transform = Matrix()
+        self._sync_scatter()
+
+    def zoom_at(self, parent_x: float, parent_y: float, new_scale: float) -> None:
+        """Zoom so the point (parent_x, parent_y) in host coords stays fixed."""
+        scatter = self._scatter()
+        if scatter is None or self.width <= 0 or self.height <= 0:
+            return
+        old_scale = float(scatter.scale)
+        new_scale = max(float(scatter.scale_min), min(float(scatter.scale_max), float(new_scale)))
+        factor = new_scale / old_scale if old_scale > 1e-9 else 1.0
+        if abs(factor - 1.0) < 1e-9:
+            return
+
+        # CRITICAL: do not assign scatter.scale — that always anchors at the
+        # scatter center. apply_transform with an explicit local anchor zooms
+        # toward the cursor.
+        anchor_x, anchor_y = scatter.to_local(parent_x, parent_y)
+        scatter.apply_transform(
+            Matrix().scale(factor, factor, 1.0),
+            post_multiply=True,
+            anchor=(anchor_x, anchor_y),
+        )
+
+        if scatter.scale <= 1.0 + 1e-6:
+            scatter.transform = Matrix()
+            self._sync_scatter()
+
+    def on_touch_down(self, touch):
+        if getattr(touch, "is_mouse_scrolling", False):
+            if self.width <= 0 or self.height <= 0:
+                return False
+            scatter = self._scatter()
+            if scatter is None:
+                return False
+            anchor = self._scroll_anchor(touch)
+            if anchor is None:
+                # Cursor is not over the map — don't steal scroll from selectors/UI.
+                return False
+            cx, cy = anchor
+            if touch.button == "scrolldown":
+                self.zoom_at(cx, cy, scatter.scale * self.ZOOM_STEP)
+                return True
+            if touch.button == "scrollup":
+                self.zoom_at(cx, cy, scatter.scale / self.ZOOM_STEP)
+                return True
+            return False
+        return super().on_touch_down(touch)
+
+    @staticmethod
+    def _offset_in_touch_space(widget) -> tuple[float, float]:
+        """Bottom-left of widget in the coordinate space touches use.
+
+        Touches under an MDScreen/RelativeLayout are in that layout's local
+        space. Widget.x/y are only immediate-parent relative, so walk up to
+        (but not including) the RelativeLayout and sum positions.
+        """
+        from kivy.uix.relativelayout import RelativeLayout
+
+        ox = oy = 0.0
+        current = widget
+        while current is not None:
+            ox += float(current.x)
+            oy += float(current.y)
+            parent = current.parent
+            if parent is None or isinstance(parent, RelativeLayout):
+                break
+            current = parent
+        return ox, oy
+
+    def _scroll_anchor(self, touch) -> tuple[float, float] | None:
+        """Host-local zoom point, or None if the cursor isn't over this widget.
+
+        Never Window.bind. Never clamp — clamping made top/bottom zooms feel
+        like they targeted a point under the cursor.
+        """
+        from kivy.core.window import Window
+
+        ox, oy = self._offset_in_touch_space(self)
+        lx = float(touch.x) - ox
+        ly = float(touch.y) - oy
+        if 0.0 <= lx <= self.width and 0.0 <= ly <= self.height:
+            return lx, ly
+
+        # Wheel events can arrive with a dead/stale touch.pos; use mouse_pos.
+        mx, my = float(Window.mouse_pos[0]), float(Window.mouse_pos[1])
+        if abs(mx) < 1.0 and abs(my) < 1.0:
+            return None
+        wx, wy = self.to_window(0.0, 0.0, initial=False, relative=True)
+        lx, ly = mx - wx, my - wy
+        if 0.0 <= lx <= self.width and 0.0 <= ly <= self.height:
+            return lx, ly
+        return None
+
 
 def create_pin_widget_classes(get_ut_color: Callable[[str], str]):
     from kivy.app import App

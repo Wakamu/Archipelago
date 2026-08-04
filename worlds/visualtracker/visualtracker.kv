@@ -58,28 +58,43 @@
                 size_hint: None, None
                 size: self.minimum_size
                 spacing: dp(10)
-        ApAsyncImage:
-            id: tracker_map
-            source: app.mapping_source
-            fit_mode: "contain"
-        Widget:
-            id: location_canvas
-            pos_hint: {'center_x': 0.5, 'center_y': 0.5}
-            size_hint: '0.01dp', '0.02dp'
-            canvas.before:
-                PushMatrix:
-                Rotate:
-                    origin: tracker_map.center
-                    angle: 180
-                    axis: 1, 0, 0
-                Translate:
-                    xy: (tracker_map.x + (tracker_map.width - tracker_map.norm_image_size[0])/2, tracker_map.y + (tracker_map.height - tracker_map.norm_image_size[1])/2)
-                Scale:
-                    origin: 0,0
-                    x: tracker_map.norm_image_size[0] / tracker_map.texture_size[0] if tracker_map.texture_size[0] > 0 else 1
-                    y: tracker_map.norm_image_size[1] / tracker_map.texture_size[1] if tracker_map.texture_size[1] > 0 else 1
-            canvas.after:
-                PopMatrix:
+        ZoomableMapHost:
+            id: map_host
+            size_hint: 1, 1
+            MapScatter:
+                id: map_scatter
+                do_rotation: False
+                do_scale: False
+                do_translation: False
+                auto_bring_to_front: False
+                FloatLayout:
+                    id: map_layer
+                    size_hint: None, None
+                    ApAsyncImage:
+                        id: tracker_map
+                        size_hint: 1, 1
+                        pos: 0, 0
+                        source: app.mapping_source
+                        fit_mode: "contain"
+                    Widget:
+                        id: location_canvas
+                        pos_hint: {'center_x': 0.5, 'center_y': 0.5}
+                        size_hint: None, None
+                        size: dp(1), dp(1)
+                        canvas.before:
+                            PushMatrix:
+                            Rotate:
+                                origin: tracker_map.center
+                                angle: 180
+                                axis: 1, 0, 0
+                            Translate:
+                                xy: (tracker_map.x + (tracker_map.width - tracker_map.norm_image_size[0])/2, tracker_map.y + (tracker_map.height - tracker_map.norm_image_size[1])/2)
+                            Scale:
+                                origin: 0,0
+                                x: tracker_map.norm_image_size[0] / tracker_map.texture_size[0] if tracker_map.texture_size[0] > 0 else 1
+                                y: tracker_map.norm_image_size[1] / tracker_map.texture_size[1] if tracker_map.texture_size[1] > 0 else 1
+                        canvas.after:
+                            PopMatrix:
 
 <ItemQualityFilter>:
     orientation: "horizontal"

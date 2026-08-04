@@ -122,13 +122,32 @@ def _siblings_at_depth(tabs: list[dict], path: list[int], depth: int) -> list[di
     return parent.get("children", [])
 
 
-def _resolve_leaf_path(tabs: list[dict], path: list[int]) -> list[int]:
+def _resolve_leaf_path(
+    tabs: list[dict],
+    path: list[int],
+    *,
+    ctx=None,
+    show_out_of_logic: bool = True,
+) -> list[int]:
+    """Walk into folders until a leaf map tab is reached.
+
+    When out-of-logic tabs are hidden, descend into the first child that still
+    has in-logic/glitched checks (not always children[0]). Otherwise selecting a
+    folder whose first sub-tab is empty would bounce away or show a blank map.
+    """
     resolved = list(path)
     while True:
         tab = _tab_at_path(tabs, resolved)
         if tab is None or not tab.get("children"):
             return resolved
-        resolved.append(0)
+        children = tab["children"]
+        child_index = 0
+        if ctx is not None and not show_out_of_logic:
+            for index, child in enumerate(children):
+                if mapping_tab_is_listed(ctx, child, show_out_of_logic=False):
+                    child_index = index
+                    break
+        resolved.append(child_index)
 
 
 def _iter_leaf_tabs(tabs: list[dict]):
@@ -347,18 +366,35 @@ def load_mapping_tab(ctx, logger: logging.Logger, tab_path: list[int] | int | st
     if not ctx.ui or not ctx.mapping_page or not ctx.mapping_tabs:
         return
 
+    show_out_of_logic = bool(getattr(ctx.ui, "show_out_of_logic_tabs", False))
+
     if isinstance(tab_path, int):
-        tab_path = _resolve_leaf_path(ctx.mapping_tabs, [tab_path])
+        tab_path = _resolve_leaf_path(
+            ctx.mapping_tabs,
+            [tab_path],
+            ctx=ctx,
+            show_out_of_logic=show_out_of_logic,
+        )
     elif isinstance(tab_path, str):
         for index, tab in enumerate(ctx.mapping_tabs):
             if tab["name"] == tab_path:
-                tab_path = _resolve_leaf_path(ctx.mapping_tabs, [index])
+                tab_path = _resolve_leaf_path(
+                    ctx.mapping_tabs,
+                    [index],
+                    ctx=ctx,
+                    show_out_of_logic=show_out_of_logic,
+                )
                 break
         else:
             logger.error("Attempted to load a mapping tab that doesn't exist.")
             return
     elif isinstance(tab_path, list):
-        tab_path = _resolve_leaf_path(ctx.mapping_tabs, tab_path)
+        tab_path = _resolve_leaf_path(
+            ctx.mapping_tabs,
+            tab_path,
+            ctx=ctx,
+            show_out_of_logic=show_out_of_logic,
+        )
     else:
         logger.error("Attempted to load a mapping tab that doesn't exist.")
         return
