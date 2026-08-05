@@ -6,6 +6,7 @@ import sys
 
 from CommonClient import gui_enabled, get_base_parser, handle_url_arg, server_loop
 from worlds.tracker.TrackerClient import TrackerGameContext, CurrentTrackerState, logger
+import kvui  # noqa: F401 - frozen: set KIVY_DATA_DIR before .gui imports kivy
 from .gui import (
     build_items_tab,
     build_mapping_tab,

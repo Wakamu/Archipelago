@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Callable
 
+import kvui  # noqa: F401 - frozen: set KIVY_DATA_DIR before kivy imports
 from kivy.graphics.transformation import Matrix
 from kivy.uix.scatter import Scatter
 from kivy.uix.stencilview import StencilView

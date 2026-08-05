@@ -4,6 +4,10 @@ from worlds.AutoWorld import World
 
 def launch_client(*args):
     try:
+        # Frozen installs need kvui to set KIVY_DATA_DIR before any kivy import.
+        # Desktop shortcuts launch this component without the launcher GUI having
+        # already imported kvui, so do it here first.
+        import kvui  # noqa: F401
         from .Client import launch
     except ModuleNotFoundError as exc:
         if exc.name and exc.name.startswith("worlds.tracker"):

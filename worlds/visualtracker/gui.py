@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import pkgutil
 
+# kvui must be imported before kivy so frozen installs get KIVY_DATA_DIR.
+from kvui import MDRecycleView
 from kivy.properties import BooleanProperty, StringProperty
 from kivy.uix.boxlayout import BoxLayout
-from kvui import MDRecycleView
 
 
 class ItemQualityFilter(BoxLayout):
