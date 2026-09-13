@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile, is_zipfile
 
-from Utils import local_path
+from Utils import user_path
 from worlds import AutoWorld
 
 
@@ -22,7 +22,7 @@ class VisualPresetEntry:
 
 
 def visual_packs_dir() -> Path:
-    path = Path(local_path(VISUAL_PACKS_FOLDER))
+    path = Path(user_path(VISUAL_PACKS_FOLDER))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
