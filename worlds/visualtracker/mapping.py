@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import ZipFile, is_zipfile
 
-from Utils import local_path
+from Utils import local_path, user_path
 from worlds import AutoWorld
 
 
@@ -22,9 +22,45 @@ class VisualPresetEntry:
 
 
 def visual_packs_dir() -> Path:
-    path = Path(local_path(VISUAL_PACKS_FOLDER))
-    path.mkdir(parents=True, exist_ok=True)
+    """Writable folder for visual packs (``user_path``, not the install tree).
+
+    On Linux AppImage / ``/opt`` installs, ``local_path`` is read-only, so
+    creating ``visual_packs`` there raises PermissionError / ERROFS. Archipelago
+    already routes writable data through ``user_path`` (e.g.
+    ``~/.local/share/Archipelago``).
+    """
+    path = Path(user_path(VISUAL_PACKS_FOLDER))
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Defensive fallback if user_path somehow isn't creatable yet.
+        from Utils import home_path
+
+        path = Path(home_path(VISUAL_PACKS_FOLDER))
+        path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def _visual_packs_search_dirs() -> list[Path]:
+    """Writable user dir first; also read any packs left beside the install."""
+    dirs: list[Path] = []
+    seen: set[Path] = set()
+
+    def _add(path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        dirs.append(path)
+
+    _add(visual_packs_dir())
+    local_dir = Path(local_path(VISUAL_PACKS_FOLDER))
+    if local_dir.is_dir():
+        _add(local_dir)
+    return dirs
 
 
 def _read_preset_manifest(path: Path) -> dict | None:
@@ -49,10 +85,28 @@ def _read_preset_manifest(path: Path) -> dict | None:
 
 def list_visual_presets() -> list[VisualPresetEntry]:
     entries: list[VisualPresetEntry] = []
-    for path in sorted(visual_packs_dir().glob("*.zip"), key=lambda p: p.name.lower()):
-        manifest = _read_preset_manifest(path)
-        game = (manifest or {}).get("game") or path.stem
-        entries.append(VisualPresetEntry(path=str(path.resolve()), game=game, name=path.name))
+    seen_paths: set[str] = set()
+    try:
+        search_dirs = _visual_packs_search_dirs()
+    except OSError:
+        return entries
+
+    for packs_dir in search_dirs:
+        try:
+            paths = sorted(packs_dir.glob("*.zip"), key=lambda p: p.name.lower())
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                resolved = str(path.resolve())
+            except OSError:
+                resolved = str(path)
+            if resolved in seen_paths:
+                continue
+            seen_paths.add(resolved)
+            manifest = _read_preset_manifest(path)
+            game = (manifest or {}).get("game") or path.stem
+            entries.append(VisualPresetEntry(path=resolved, game=game, name=path.name))
     return entries
 
 

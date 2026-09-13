@@ -250,9 +250,15 @@ def apply_mapping_manager_features(
         self.repaint_visual_packs_list()
 
     def refresh_visual_packs_list(self) -> None:
+        from worlds.tracker.TrackerClient import logger
+
         from .mapping import list_visual_presets
 
-        self._cached_visual_presets = list_visual_presets()
+        try:
+            self._cached_visual_presets = list_visual_presets()
+        except OSError:
+            logger.warning("Could not list visual packs.", exc_info=True)
+            self._cached_visual_presets = []
         self._update_visual_pack_dropdown_label()
 
     def repaint_visual_packs_list(self) -> None:
