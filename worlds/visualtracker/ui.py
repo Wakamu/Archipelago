@@ -107,11 +107,14 @@ def apply_mapping_manager_features(
             return
 
         show_out_of_logic = bool(getattr(self, "show_out_of_logic_tabs", False))
+        # Keep the auto-tabbed tab visible in the breadcrumb even when out-of-logic
+        # tabs are hidden from the manual dropdown.
+        resolve_out_of_logic = show_out_of_logic or bool(getattr(self.ctx, "auto_tab", False))
         leaf_path = _resolve_leaf_path(
             self.ctx.mapping_tabs,
             list(self.ctx.mapping_tab_path),
             ctx=self.ctx,
-            show_out_of_logic=show_out_of_logic,
+            show_out_of_logic=resolve_out_of_logic,
         )
         for depth in range(len(leaf_path)):
             siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
@@ -139,17 +142,19 @@ def apply_mapping_manager_features(
         if not self.ctx.mapping_tabs:
             return
         show_out_of_logic = bool(getattr(self, "show_out_of_logic_tabs", False))
+        resolve_out_of_logic = show_out_of_logic or bool(getattr(self.ctx, "auto_tab", False))
         leaf_path = _resolve_leaf_path(
             self.ctx.mapping_tabs,
             list(self.ctx.mapping_tab_path),
             ctx=self.ctx,
-            show_out_of_logic=show_out_of_logic,
+            show_out_of_logic=resolve_out_of_logic,
         )
         siblings = _siblings_at_depth(self.ctx.mapping_tabs, leaf_path, depth)
         entries = [
             (i, tab)
             for i, tab in enumerate(siblings)
             if mapping_tab_is_listed(self.ctx, tab, show_out_of_logic=show_out_of_logic)
+            or (depth < len(leaf_path) and i == leaf_path[depth])
         ]
         dropdown_menu = MarkupDropdown(caller=item, hor_growth="right", ver_growth="down")
         if not entries:
@@ -250,10 +255,52 @@ def apply_mapping_manager_features(
         self.repaint_visual_packs_list()
 
     def refresh_visual_packs_list(self) -> None:
+        from worlds.tracker.TrackerClient import logger
+
         from .mapping import list_visual_presets
 
-        self._cached_visual_presets = list_visual_presets()
+        try:
+            self._cached_visual_presets = list_visual_presets()
+        except OSError:
+            logger.warning("Could not list visual packs.", exc_info=True)
+            self._cached_visual_presets = []
         self._update_visual_pack_dropdown_label()
+
+    def open_visual_packs_folder(self) -> None:
+        from Utils import open_file
+
+        from .mapping import visual_packs_dir
+
+        open_file(visual_packs_dir())
+
+    def show_mapping_tab(self) -> None:
+        if not hasattr(self, "tabs") or not getattr(self, "screens", None):
+            return
+        mapping_tab = None
+        for tab in self.tabs.children:
+            if getattr(tab, "text", None) == "Mapping":
+                mapping_tab = tab
+                break
+        if mapping_tab is None:
+            return
+        for tab in self.tabs.children:
+            if hasattr(tab, "active"):
+                tab.active = tab is mapping_tab
+        # Call switch_screens directly — setting active only updates the tab
+        # highlight; on_release() does not reliably fire the KV binding here.
+        self.screens.switch_screens(mapping_tab)
+
+    def create_connection_shortcut(self) -> None:
+        from Utils import messagebox
+
+        from .mapping import create_connected_shortcut
+
+        try:
+            shortcut_name = create_connected_shortcut(self.ctx)
+        except Exception as exc:
+            messagebox("Create Shortcut", str(exc), error=True)
+            return
+        messagebox("Create Shortcut", f"Desktop shortcut created:\n{shortcut_name}")
 
     def repaint_visual_packs_list(self) -> None:
         if not hasattr(self, "vt_pack_dropdown_text"):
@@ -271,6 +318,9 @@ def apply_mapping_manager_features(
     manager_class.visual_pack_dropdown_callback = visual_pack_dropdown_callback
     manager_class.load_visual_pack = load_visual_pack
     manager_class.refresh_visual_packs_list = refresh_visual_packs_list
+    manager_class.open_visual_packs_folder = open_visual_packs_folder
+    manager_class.show_mapping_tab = show_mapping_tab
+    manager_class.create_connection_shortcut = create_connection_shortcut
     manager_class.repaint_visual_packs_list = repaint_visual_packs_list
 
 
