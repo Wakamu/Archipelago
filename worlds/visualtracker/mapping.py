@@ -63,6 +63,27 @@ def _visual_packs_search_dirs() -> list[Path]:
         _add(local_dir)
     return dirs
 
+def _visual_packs_search_dirs() -> list[Path]:
+    """Writable user dir first; also read any packs left beside the install."""
+    dirs: list[Path] = []
+    seen: set[Path] = set()
+
+    def _add(path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        dirs.append(path)
+
+    _add(visual_packs_dir())
+    local_dir = Path(local_path(VISUAL_PACKS_FOLDER))
+    if local_dir.is_dir():
+        _add(local_dir)
+    return dirs
+
 
 def _read_preset_manifest(path: Path) -> dict | None:
     if not is_zipfile(path):

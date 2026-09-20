@@ -286,7 +286,7 @@ def apply_mapping_manager_features(
         for tab in self.tabs.children:
             if hasattr(tab, "active"):
                 tab.active = tab is mapping_tab
-        # Call switch_screens directly — setting active only updates the tab
+        # Call switch_screens directly � setting active only updates the tab
         # highlight; on_release() does not reliably fire the KV binding here.
         self.screens.switch_screens(mapping_tab)
 
