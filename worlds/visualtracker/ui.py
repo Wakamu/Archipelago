@@ -332,6 +332,7 @@ def apply_items_manager_features(
     from .items import (
         ITEM_QUALITIES,
         build_inventory_entries,
+        build_uncollected_entries,
         filter_inventory_entries,
         format_inventory_entry,
     )
@@ -344,38 +345,84 @@ def apply_items_manager_features(
                 enabled.add(quality)
         return enabled
 
+    def _item_view_enabled(self, key: str, default: bool = True) -> bool:
+        widget = getattr(self, "item_view_widgets", {}).get(key)
+        if widget is None:
+            return default
+        return bool(widget.active)
+
     def refresh_items_tab(self, tracker_state=None) -> None:
         if self.ctx.items_page is None:
             return
         if tracker_state is None:
             tracker_state = getattr(self.ctx, "_last_tracker_state", None)
 
-        entries = build_inventory_entries(self.ctx, tracker_state)
+        received_entries = build_inventory_entries(self.ctx, tracker_state)
+        uncollected_entries = build_uncollected_entries(self.ctx)
         enabled = self._enabled_item_filters()
-        filtered = filter_inventory_entries(entries, enabled)
+        show_received = self._item_view_enabled("received", True)
+        show_uncollected = self._item_view_enabled("uncollected", False)
+        filtered_received = filter_inventory_entries(received_entries, enabled) if show_received else []
+        filtered_uncollected = filter_inventory_entries(uncollected_entries, enabled) if show_uncollected else []
+
+        received_count = sum(entry.count for entry in received_entries)
+        missing_count = sum(entry.count for entry in uncollected_entries)
+        shown_count = sum(entry.count for entry in filtered_received) + sum(
+            entry.count for entry in filtered_uncollected
+        )
+
+        if hasattr(self, "vt_items_total_label"):
+            self.vt_items_total_label.text = f"Received: {received_count}"
+            if hasattr(self, "vt_items_missing_label"):
+                self.vt_items_missing_label.text = f"Missing: {missing_count}"
+            self.vt_items_filtered_label.text = f"Shown: {shown_count}"
 
         if not self.ctx.game:
             self.ctx.items_page.data = [{"text": "Connect to a slot to view received items."}]
             if hasattr(self, "vt_items_total_label"):
-                self.vt_items_total_label.text = "Items: 0"
+                self.vt_items_total_label.text = "Received: 0"
+                if hasattr(self, "vt_items_missing_label"):
+                    self.vt_items_missing_label.text = "Missing: 0"
                 self.vt_items_filtered_label.text = "Shown: 0"
             return
 
-        if not entries:
-            self.ctx.items_page.data = [{"text": "No items received yet."}]
-        elif not filtered:
-            self.ctx.items_page.data = [{"text": "No items match the selected quality filters."}]
-        else:
-            self.ctx.items_page.data = [
-                {"text": format_inventory_entry(entry, get_ut_color)}
-                for entry in filtered
-            ]
+        race_mode = bool(self.ctx.stored_data and self.ctx.stored_data.get("_read_race_mode"))
+        rows: list[dict[str, str]] = []
+        both_views = show_received and show_uncollected
 
-        if hasattr(self, "vt_items_total_label"):
-            total_count = sum(entry.count for entry in entries)
-            shown_count = sum(entry.count for entry in filtered)
-            self.vt_items_total_label.text = f"Items: {total_count}"
-            self.vt_items_filtered_label.text = f"Shown: {shown_count}"
+        if show_received:
+            if both_views:
+                rows.append({"text": "[b]Received[/b]"})
+            if not received_entries:
+                rows.append({"text": "No items received yet."})
+            elif not filtered_received:
+                rows.append({"text": "No received items match the selected quality filters."})
+            else:
+                rows.extend(
+                    {"text": format_inventory_entry(entry, get_ut_color)}
+                    for entry in filtered_received
+                )
+
+        if show_uncollected:
+            if both_views:
+                rows.append({"text": "[b]Uncollected[/b]"})
+            if race_mode:
+                rows.append({"text": "Uncollected items are hidden during Race Mode."})
+            elif not uncollected_entries:
+                rows.append({"text": "No uncollected items left in this slot's item pool."})
+            elif not filtered_uncollected:
+                rows.append({"text": "No uncollected items match the selected quality filters."})
+            else:
+                rows.extend(
+                    {"text": format_inventory_entry(entry, get_ut_color)}
+                    for entry in filtered_uncollected
+                )
+
+        if not show_received and not show_uncollected:
+            rows = [{"text": "Turn on Received and/or Uncollected to list items."}]
+
+        self.ctx.items_page.data = rows
 
     manager_class._enabled_item_filters = _enabled_item_filters
+    manager_class._item_view_enabled = _item_view_enabled
     manager_class.refresh_items_tab = refresh_items_tab

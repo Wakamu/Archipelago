@@ -362,6 +362,27 @@ class VisualTrackerContext(TrackerGameContext):
                 sidebar_content.add_widget(MDDivider())
                 sidebar_content.add_widget(manager_self.vt_selection_title)
                 sidebar_content.add_widget(manager_self.vt_selection_body)
+                manager_self.vt_missing_box = MDBoxLayout(
+                    orientation="vertical",
+                    size_hint_y=None,
+                    spacing=dp(4),
+                )
+                manager_self.vt_missing_button = MDButton(
+                    MDButtonText(text="Show missing"),
+                    style="text",
+                    size_hint_x=None,
+                    on_release=lambda *_: manager_self.ctx.show_selected_pin_missing(),
+                )
+                manager_self.vt_missing_label = MDLabel(
+                    text="",
+                    markup=True,
+                    adaptive_height=True,
+                    halign="left",
+                )
+                manager_self.vt_missing_box.bind(
+                    minimum_height=manager_self.vt_missing_box.setter("height")
+                )
+                sidebar_content.add_widget(manager_self.vt_missing_box)
 
                 sidebar_scroll.add_widget(sidebar_content)
                 sidebar.add_widget(sidebar_scroll)
@@ -398,11 +419,49 @@ class VisualTrackerContext(TrackerGameContext):
                     if manager_self.vt_auto_tab_filter.active != desired_auto_tab:
                         manager_self.vt_auto_tab_filter.active = desired_auto_tab
 
-            def update_mapping_selection(manager_self, title: str, body: str):
+            def update_mapping_selection(
+                manager_self,
+                title: str,
+                body: str,
+                *,
+                show_missing_button: bool = False,
+                missing_text: str = "",
+            ):
                 if not hasattr(manager_self, "vt_selection_title"):
                     return
                 manager_self.vt_selection_title.text = title
                 manager_self.vt_selection_body.text = body
+                manager_self._set_mapping_missing_panel(
+                    show_button=show_missing_button,
+                    missing_text=missing_text,
+                )
+
+            def _set_mapping_missing_panel(
+                manager_self,
+                *,
+                show_button: bool = False,
+                missing_text: str = "",
+            ):
+                box = getattr(manager_self, "vt_missing_box", None)
+                button = getattr(manager_self, "vt_missing_button", None)
+                label = getattr(manager_self, "vt_missing_label", None)
+                if box is None or button is None or label is None:
+                    return
+                if button.parent is box:
+                    box.remove_widget(button)
+                if label.parent is box:
+                    box.remove_widget(label)
+                button.disabled = False
+                if show_button:
+                    for child in getattr(button, "children", []):
+                        if hasattr(child, "text"):
+                            child.text = "Show missing"
+                    box.add_widget(button)
+                if missing_text:
+                    label.text = missing_text
+                    box.add_widget(label)
+                else:
+                    label.text = ""
 
         apply_mapping_manager_features(
             VisualTrackerManager,
@@ -658,7 +717,76 @@ class VisualTrackerContext(TrackerGameContext):
                 body_lines.append(f"[color={color}]{status}[/color]")
             else:
                 body_lines.append(f"- {location_id_to_name[location_id]}: [color={color}]{status}[/color]")
-        self.ui.update_mapping_selection(title, "\n".join(body_lines))
+        missing_text = getattr(pin, "missing_info", None) or ""
+        show_button = not missing_text and self._pin_has_locked_locations(pin)
+        self.ui.update_mapping_selection(
+            title,
+            "\n".join(body_lines),
+            show_missing_button=show_button,
+            missing_text=missing_text,
+        )
+
+    @staticmethod
+    def _pin_has_locked_locations(pin) -> bool:
+        for status in getattr(pin, "locationDict", {}).values():
+            if status == "collected":
+                continue
+            if status in {"in_logic", "hinted_in_logic"}:
+                continue
+            return True
+        return False
+
+    def show_selected_pin_missing(self) -> None:
+        pin = self.selected_mapping_pin
+        if not pin or not self.ui:
+            return
+        button = getattr(self.ui, "vt_missing_button", None)
+        if button is not None:
+            button.disabled = True
+            for child in getattr(button, "children", []):
+                if hasattr(child, "text"):
+                    child.text = "Checking..."
+        pin.missing_info = self._missing_items_text_for_pin(pin)
+        self.select_mapping_pin(pin)
+
+    def _missing_items_text_for_pin(self, pin) -> str:
+        core = self.tracker_core
+        if not core or not core.multiworld or core.player_id is None:
+            return "[b]Missing:[/b] tracker logic not ready"
+        if self.stored_data and self.stored_data.get("_read_race_mode"):
+            return "[b]Missing:[/b] disabled during Race Mode"
+
+        locked = [
+            location_id
+            for location_id, status in pin.locationDict.items()
+            if location_id not in core.locations_available
+            and location_id not in self.checked_locations
+            and location_id not in core.ignored_locations
+        ]
+        if not locked:
+            return "[b]Missing:[/b] already reachable"
+
+        items_to_check = {
+            item.name
+            for item in core.multiworld.get_items()
+            if item.player == core.player_id and item.advancement
+        }
+        unlocks: list[str] = []
+        try:
+            for item_name in sorted(items_to_check):
+                core.manual_items.append(item_name)
+                try:
+                    core.updateTracker()
+                    if any(location_id in core.locations_available for location_id in locked):
+                        unlocks.append(item_name)
+                finally:
+                    core.manual_items.pop()
+        finally:
+            core.updateTracker()
+
+        if not unlocks:
+            return "[b]Missing:[/b] no single item unlocks this"
+        return "[b]Missing:[/b]\n" + "\n".join(unlocks)
 
     @staticmethod
     def _status_color(status: str) -> str:

@@ -56,14 +56,14 @@ def _resolve_world_item(ctx, item_name: str, item_flags: int) -> Item | None:
         return None
 
 
-def build_inventory_entries(ctx, tracker_state=None) -> list[InventoryEntry]:
-    if not ctx.tracker_core or not ctx.game or not ctx.tracker_core.multiworld:
-        return []
+def _received_item_counts(ctx) -> tuple[Counter[str], dict[str, set[str]]]:
+    counts: Counter[str] = Counter()
+    qualities_by_name: dict[str, set[str]] = {}
+    if not ctx.tracker_core or not ctx.tracker_core.multiworld:
+        return counts, qualities_by_name
 
     player_id = ctx.tracker_core.player_id
     item_id_to_name = ctx.tracker_core.multiworld.worlds[player_id].item_id_to_name
-    counts: Counter[str] = Counter()
-    qualities_by_name: dict[str, set[str]] = {}
 
     for network_item in ctx.tracker_items_received:
         if network_item.item <= 0:
@@ -81,6 +81,15 @@ def build_inventory_entries(ctx, tracker_state=None) -> list[InventoryEntry]:
         counts[item_name] += 1
         qualities_by_name.setdefault(item_name, set()).add("progression")
 
+    return counts, qualities_by_name
+
+
+def build_inventory_entries(ctx, tracker_state=None) -> list[InventoryEntry]:
+    if not ctx.tracker_core or not ctx.game or not ctx.tracker_core.multiworld:
+        return []
+
+    counts, qualities_by_name = _received_item_counts(ctx)
+
     if tracker_state is not None:
         for event_name, event_count in Counter(tracker_state.events).items():
             counts[event_name] += event_count
@@ -89,6 +98,34 @@ def build_inventory_entries(ctx, tracker_state=None) -> list[InventoryEntry]:
     return [
         InventoryEntry(name=name, count=counts[name], qualities=qualities_by_name.get(name, set()))
         for name in sorted(counts)
+    ]
+
+
+def build_uncollected_entries(ctx) -> list[InventoryEntry]:
+    """Items still in this slot's generated pool that have not been received."""
+    if not ctx.tracker_core or not ctx.game or not ctx.tracker_core.multiworld:
+        return []
+    if ctx.stored_data and ctx.stored_data.get("_read_race_mode"):
+        return []
+
+    player_id = ctx.tracker_core.player_id
+    placed: Counter[str] = Counter()
+    qualities_by_name: dict[str, set[str]] = {}
+    for item in ctx.tracker_core.multiworld.get_items():
+        if item.player != player_id or item.code is None:
+            continue
+        placed[item.name] += 1
+        qualities_by_name.setdefault(item.name, set()).update(item_qualities(item))
+
+    received, _ = _received_item_counts(ctx)
+    return [
+        InventoryEntry(
+            name=name,
+            count=placed[name] - received[name],
+            qualities=qualities_by_name.get(name, set()),
+        )
+        for name in sorted(placed)
+        if placed[name] - received[name] > 0
     ]
 
 

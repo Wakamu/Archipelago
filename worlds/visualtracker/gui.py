@@ -60,10 +60,29 @@ def build_items_tab(ctx, manager) -> None:
     items_layout = BoxLayout(orientation="vertical")
 
     header = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36))
-    manager.vt_items_total_label = MDLabel(text="Items: 0", halign="center")
+    manager.vt_items_total_label = MDLabel(text="Received: 0", halign="center")
+    manager.vt_items_missing_label = MDLabel(text="Missing: 0", halign="center")
     manager.vt_items_filtered_label = MDLabel(text="Shown: 0", halign="center")
     header.add_widget(manager.vt_items_total_label)
+    header.add_widget(manager.vt_items_missing_label)
     header.add_widget(manager.vt_items_filtered_label)
+
+    view_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(8), padding=(dp(8), 0))
+    manager.item_view_filters = {"received": True, "uncollected": False}
+    manager.item_view_widgets = {}
+
+    def on_view_changed(_instance, _value) -> None:
+        if hasattr(manager, "refresh_items_tab"):
+            manager.refresh_items_tab()
+
+    received_view = ItemQualityFilter(text="Received", filter_key="received", active=True)
+    uncollected_view = ItemQualityFilter(text="Uncollected", filter_key="uncollected", active=False)
+    received_view.bind(active=on_view_changed)
+    uncollected_view.bind(active=on_view_changed)
+    manager.item_view_widgets["received"] = received_view
+    manager.item_view_widgets["uncollected"] = uncollected_view
+    view_row.add_widget(received_view)
+    view_row.add_widget(uncollected_view)
 
     filter_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36), spacing=dp(8), padding=(dp(8), 0))
     manager.item_quality_filters = {quality: True for quality in ITEM_QUALITIES}
@@ -84,6 +103,7 @@ def build_items_tab(ctx, manager) -> None:
 
     items_layout.add_widget(header)
     items_layout.add_widget(MDDivider(size_hint_y=None, height=dp(1)))
+    items_layout.add_widget(view_row)
     items_layout.add_widget(filter_row)
     items_layout.add_widget(MDDivider(size_hint_y=None, height=dp(1)))
     items_layout.add_widget(items_view)
